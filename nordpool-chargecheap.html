@@ -1,0 +1,100 @@
+<script type="text/javascript">
+RED.nodes.registerType("nordpool-chargecheap", {
+    category: "function",
+    color: "#C7E9C0",
+    defaults: {
+        name: { value: "" },
+        start: { value: "", required: false },
+        stop: { value: "", required: false },
+        count: { value: "", required: false },
+        payload_on: { value: "on", required: false },
+        payload_off: { value: "off", required: false },
+        force_value: { value: -600, required: false },
+        ha_entity: { value: "", required: false },
+        invert_selection: { value: false, required: false },
+        contiguous_mode: { value: false, required: false }
+    },
+    inputs: 1,
+    outputs: 4,
+    icon: "font-awesome/fa-bolt",
+    label: function () {
+        return this.name || "Nordpool ChargeCheap";
+    },
+    outputLabels: ["ON", "OFF", "Payload", "HA"],
+    paletteLabel: "Nordpool ChargeCheap",
+    labelStyle: "node_label_italic"
+});
+</script>
+
+<style>
+.form-row label {
+    width: 160px;
+    display: inline-block;
+}
+</style>
+
+<script type="text/html" data-template-name="nordpool-chargecheap">
+    <div class="form-row">
+        <label for="node-input-name"><i class="fa fa-tag"></i> Name</label>
+        <input type="text" id="node-input-name" placeholder="Name">
+    </div>
+
+    <div class="form-row">
+        <label for="node-input-start"><i class="fa fa-clock-o"></i> Start hour</label>
+        <input type="number" id="node-input-start" min="0" max="23" placeholder="e.g. 9">
+    </div>
+
+    <div class="form-row">
+        <label for="node-input-stop"><i class="fa fa-clock-o"></i> Stop hour</label>
+        <input type="number" id="node-input-stop" min="0" max="23" placeholder="e.g. 17">
+    </div>
+
+    <div class="form-row">
+        <label for="node-input-count"><i class="fa fa-hashtag"></i> Count</label>
+        <input type="number" id="node-input-count" min="1" max="96" placeholder="e.g. 5">
+    </div>
+
+    <div class="form-row">
+        <label for="node-input-invert_selection"><i class="fa fa-exchange"></i> Invert selection</label>
+        <input type="checkbox" id="node-input-invert_selection">
+    </div>
+
+    <div class="form-row">
+        <label for="node-input-contiguous_mode"><i class="fa fa-link"></i> Contiguous block mode</label>
+        <input type="checkbox" id="node-input-contiguous_mode">
+    </div>
+
+    <div class="form-row">
+        <label for="node-input-payload_on"><i class="fa fa-toggle-on"></i> Payload ON</label>
+        <input type="text" id="node-input-payload_on" placeholder="on">
+    </div>
+
+    <div class="form-row">
+        <label for="node-input-payload_off"><i class="fa fa-toggle-off"></i> Payload OFF</label>
+        <input type="text" id="node-input-payload_off" placeholder="off">
+    </div>
+
+    <div class="form-row">
+        <label for="node-input-force_value"><i class="fa fa-bolt"></i> Force value outside period</label>
+        <input type="number" id="node-input-force_value" placeholder="-600">
+    </div>
+
+    <div class="form-row">
+        <label for="node-input-ha_entity"><i class="fa fa-home"></i> Home Assistant entity</label>
+        <input type="text" id="node-input-ha_entity" placeholder="input_number.elpris">
+    </div>
+</script>
+
+<script type="text/html" data-help-name="nordpool-chargecheap">
+    <p>
+        <b>Nordpool ChargeCheap</b> väljer de billigaste (eller dyraste om inverterat) tiderna inom ett visst fönster.<br>
+        Stödjer:
+        <ul>
+            <li>Vanligt läge – väljer enskilda billigaste kvartarna</li>
+            <li>Sammanhängande block-läge – hittar billigaste/dyraste blocket</li>
+        </ul>
+        <b>Count</b> = antal kvartstimmar (inte timmar).<br>
+        T.ex. 4 betyder 1 timme.
+    </p>
+</script>
+
