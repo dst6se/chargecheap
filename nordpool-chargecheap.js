@@ -44,7 +44,7 @@ module.exports = function (RED) {
                 if (isNaN(num)) return null;
                 num = Math.floor(num);
                 if (num < 0) num = 0;
-		if (num > 95) num = 95;
+                if (num > 95) num = 95;
                 return num;
             }
 
