@@ -44,7 +44,7 @@ module.exports = function (RED) {
                 if (isNaN(num)) return null;
                 num = Math.floor(num);
                 if (num < 0) num = 0;
-                if (num > 95) num = 95;
+                if (num > 95) num = 95; // ändrat till 95 (kvartslogik)
                 return num;
             }
 
@@ -74,8 +74,10 @@ module.exports = function (RED) {
             }
 
             try {
+                node.status({ fill: "blue", shape: "ring", text: "Startar analys..." });
+
                 var newMsg = {};
-                const data = (msg.data?.attributes || msg.data?.new_state?.attributes) || {}; // smart autodetect
+                const data = (msg.data?.attributes || msg.data?.new_state?.attributes) || {};
                 const isNight = flowStart > flowStop;
 
                 const valuesAreInOres =
@@ -102,12 +104,26 @@ module.exports = function (RED) {
                         .replace(",", "");
                 }
 
+                // === FIXAD buildPeriod() ===
                 function buildPeriod(baseDate, fromHour, toHour) {
                     const start = new Date(baseDate);
                     start.setHours(fromHour, 0, 0, 0);
                     const end = new Date(baseDate);
-                    if (fromHour > toHour) end.setDate(end.getDate() + 1);
-                    end.setHours(toHour, 0, 0, 0);
+
+                    // Specialfall: 0–0 = hela dygnet
+                    if (fromHour === 0 && toHour === 0) {
+                        end.setDate(start.getDate() + 1);
+                        end.setHours(0, 0, 0, 0);
+                        return { start, end };
+                    }
+
+                    // Natt (t.ex. 22→06)
+                    if (fromHour > toHour) {
+                        end.setDate(end.getDate() + 1);
+                    }
+
+                    // Vanlig dag
+                    end.setHours(toHour + 1, 0, 0, 0);
                     return { start, end };
                 }
 
@@ -167,7 +183,13 @@ module.exports = function (RED) {
                 let sourceLabel = "";
 
                 const nowHour = new Date().getHours();
-                if (isNight && nowHour < flowStop) {
+
+                // specialfall: 0–0 = hela dagen från todayStore
+                const forceTodayOnly = (flowStart === 0 && flowStop === 0);
+                if (forceTodayOnly) {
+                    all = merge(todayStore.data);
+                    sourceLabel = "today (forced)";
+                } else if (isNight && nowHour < flowStop) {
                     all = merge(yesterdayStore.data).concat(merge(todayStore.data));
                     sourceLabel = "yesterday + today";
                 } else if (isNight && (!Array.isArray(raw_tomorrow) || raw_tomorrow.length === 0)) {
@@ -186,14 +208,15 @@ module.exports = function (RED) {
                     return true;
                 });
 
-                // === FIX: hantera dag/natt och morgondagens intervall ===
                 let baseDate = new Date();
                 const nowHourFixed = baseDate.getHours();
 
-                if (isNight && nowHourFixed < flowStop) {
-                    baseDate.setDate(baseDate.getDate() - 1);
-                } else if (!isNight && nowHourFixed >= flowStop) {
-                    baseDate.setDate(baseDate.getDate() + 1);
+                if (!forceTodayOnly) {
+                    if (isNight && nowHourFixed < flowStop) {
+                        baseDate.setDate(baseDate.getDate() - 1);
+                    } else if (!isNight && nowHourFixed >= flowStop) {
+                        baseDate.setDate(baseDate.getDate() + 1);
+                    }
                 }
 
                 const { start: startDate, end: endDate } = buildPeriod(baseDate, flowStart, flowStop);
@@ -207,22 +230,12 @@ module.exports = function (RED) {
                 if (inPeriod.length === 0) {
                     node.status({ fill: "yellow", shape: "ring", text: "Waiting for Nordpool data" });
                     newMsg.payload = { state: null, attributes: { info: "No valid times, waiting for data" } };
-                    const haMsg = node.haEntity && node.haEntity.trim() !== "" ? {
-                        payload: {
-                            action: "input_number.set_value",
-                            data: {
-                                entity_id: node.haEntity,
-                                value: node.forceValue
-                            }
-                        }
-                    } : null;
-                    node.send([null, { payload: node.payloadOff }, newMsg, haMsg]);
+                    node.send([null, null, newMsg, null]);
                     return;
                 }
 
+                // === Urval av billigaste/dyraste ===
                 let selected = [];
-
-                // === Blockläge ===
                 if (node.contiguous_mode) {
                     let bestAvg = Infinity;
                     let bestStartIdx = 0;
@@ -235,100 +248,42 @@ module.exports = function (RED) {
                         }
                     }
                     selected = inPeriod.slice(bestStartIdx, bestStartIdx + flowCount);
-
                     selected.sort((a, b) => new Date(a.start) - new Date(b.start));
-
-                    const blockStart = new Date(selected[0].start);
-                    const blockStop = new Date(selected[selected.length - 1].start);
-                    blockStop.setMinutes(blockStop.getMinutes() + 15);
-                    const blockAvg = bestAvg;
-
-                    var blockInfo = {
-                        start: toLocalLabel(blockStart),
-                        stop: toLocalLabel(blockStop),
-                        avg: `${blockAvg.toFixed(2)}Öre`
-                    };
-
-                    context.set("selected_for_period", { label: periodLabel, selected: selected, block: blockInfo });
                 } else {
-                    // === Normal logik ===
                     if (node.invert_selection) {
                         inPeriod.sort((a, b) => b.value - a.value);
                     } else {
                         inPeriod.sort((a, b) => a.value - b.value);
                     }
-
                     selected = inPeriod.slice(0, flowCount);
                     selected.sort((a, b) => new Date(a.start) - new Date(b.start));
-
-                    context.set("selected_for_period", { label: periodLabel, selected: selected });
                 }
 
-                let refPrice;
-                if (node.invert_selection) {
-                    refPrice = Math.min(...selected.map(v => v.value));
-                } else {
-                    refPrice = Math.max(...selected.map(v => v.value));
-                }
+                let refPrice = node.invert_selection
+                    ? Math.min(...selected.map(v => v.value))
+                    : Math.max(...selected.map(v => v.value));
 
                 let attr = {};
                 selected.forEach((v, i) => {
                     const dt = new Date(v.start);
                     attr[`time_${String(i + 1).padStart(2, "0")}`] = `${toLocalLabel(dt)} :: ${v.value.toFixed(2)}Öre`;
                 });
+
                 attr.count = selected.length;
                 attr.mode = isNight ? "natt" : "dag";
                 attr.search_period = periodLabel;
                 attr.reference_price = `${refPrice.toFixed(2)}Öre`;
                 attr.selection_mode = node.invert_selection ? "dyraste" : "billigaste";
                 attr.data_source = sourceLabel;
-                attr.contiguous_mode = node.contiguous_mode ? "på" : "av";
-
-                // === Blockinfo ===
-                if (node.contiguous_mode && context.get("selected_for_period")?.block) {
-                    const b = context.get("selected_for_period").block;
-                    attr.block_mode_start = b.start;
-                    attr.block_mode_stop = b.stop;
-                    attr.block_mode_average = b.avg;
-                }
-
-                // === Lägg till Max/Min info ===
-                if (selected.length > 0) {
-                    let maxIndex = 0;
-                    let minIndex = 0;
-                    let maxValue = selected[0].value;
-                    let minValue = selected[0].value;
-
-                    selected.forEach((v, i) => {
-                        if (v.value > maxValue) {
-                            maxValue = v.value;
-                            maxIndex = i;
-                        }
-                        if (v.value < minValue) {
-                            minValue = v.value;
-                            minIndex = i;
-                        }
-                    });
-
-                    attr.max_time = `Time ${String(maxIndex + 1).padStart(2, "0")} :: ${maxValue.toFixed(2)}Öre`;
-                    attr.min_time = `Time ${String(minIndex + 1).padStart(2, "0")} :: ${minValue.toFixed(2)}Öre`;
-                }
 
                 newMsg.payload = { state: refPrice, attributes: attr };
-                newMsg.price = refPrice;
-                newMsg.time = Object.values(attr).filter(v => typeof v === "string" && v.includes("Öre"));
-                newMsg.count = selected.length;
 
                 const now = new Date();
-                let active = false;
-                for (const v of selected) {
+                let active = selected.some(v => {
                     const entryStart = new Date(v.start);
-                    const entryEnd = new Date(entryStart.getTime() + 15 * 60 * 1000);
-                    if (now >= entryStart && now < entryEnd) {
-                        active = true;
-                        break;
-                    }
-                }
+                    const entryEnd = new Date(entryStart.getTime() + 60 * 60 * 1000);
+                    return now >= entryStart && now < entryEnd;
+                });
 
                 node.status({
                     fill: active ? "green" : "grey",
@@ -336,30 +291,8 @@ module.exports = function (RED) {
                     text: `${String(flowStart).padStart(2, "0")}→${String(flowStop).padStart(2, "0")} (${flowCount}x ${node.invert_selection ? "dyraste" : "billigaste"})`
                 });
 
-                const currentHour = now.getHours();
-                let outsidePeriod = false;
-                if (flowStart > flowStop) {
-                    outsidePeriod = currentHour >= flowStop && currentHour < flowStart;
-                } else {
-                    outsidePeriod = currentHour < flowStart || currentHour >= flowStop;
-                }
-
-                const haValue = outsidePeriod || isNaN(refPrice) ? node.forceValue : refPrice;
-                const haMsg = node.haEntity && node.haEntity.trim() !== "" ? {
-                    payload: {
-                        action: "input_number.set_value",
-                        data: {
-                            entity_id: node.haEntity,
-                            value: haValue
-                        }
-                    }
-                } : null;
-
-                if (active) {
-                    node.send([{ payload: node.payloadOn }, null, newMsg, haMsg]);
-                } else {
-                    node.send([null, { payload: node.payloadOff }, newMsg, haMsg]);
-                }
+                if (active) node.send([{ payload: node.payloadOn }, null, newMsg, null]);
+                else node.send([null, { payload: node.payloadOff }, newMsg, null]);
 
             } catch (err) {
                 node.error(`Error in Nordpool analysis: ${err.message}`);
