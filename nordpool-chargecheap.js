@@ -44,7 +44,7 @@ module.exports = function (RED) {
                 if (isNaN(num)) return null;
                 num = Math.floor(num);
                 if (num < 0) num = 0;
-                if (num > 95) num = 95; // ändrat till 95 (kvartslogik)
+                if (num > 95) num = 95; // stöd för kvartbaserad logik
                 return num;
             }
 
@@ -74,10 +74,8 @@ module.exports = function (RED) {
             }
 
             try {
-                node.status({ fill: "blue", shape: "ring", text: "Startar analys..." });
-
                 var newMsg = {};
-                const data = (msg.data?.attributes || msg.data?.new_state?.attributes) || {};
+                const data = (msg.data?.attributes || msg.data?.new_state?.attributes) || {}; // smart autodetect
                 const isNight = flowStart > flowStop;
 
                 const valuesAreInOres =
@@ -104,26 +102,27 @@ module.exports = function (RED) {
                         .replace(",", "");
                 }
 
-                // === FIXAD buildPeriod() ===
+                // ✅ Uppdaterad buildPeriod()
                 function buildPeriod(baseDate, fromHour, toHour) {
                     const start = new Date(baseDate);
                     start.setHours(fromHour, 0, 0, 0);
                     const end = new Date(baseDate);
 
-                    // Specialfall: 0–0 = hela dygnet
-                    if (fromHour === 0 && toHour === 0) {
-                        end.setDate(start.getDate() + 1);
-                        end.setHours(0, 0, 0, 0);
+                    // 🔹 Om start == stop ⇒ hela dygnet
+                    if (fromHour === toHour) {
+                        end.setDate(start.getDate() + 1); // nästa dag
+                        end.setHours(fromHour, 0, 0, 0);
                         return { start, end };
                     }
 
-                    // Natt (t.ex. 22→06)
+                    // 🔹 Om perioden går över midnatt
                     if (fromHour > toHour) {
                         end.setDate(end.getDate() + 1);
                     }
 
-                    // Vanlig dag
-                    end.setHours(toHour + 1, 0, 0, 0);
+                    // 🔹 Exakt sluttid utan +1 timme
+                    end.setHours(toHour, 0, 0, 0);
+
                     return { start, end };
                 }
 
@@ -183,13 +182,7 @@ module.exports = function (RED) {
                 let sourceLabel = "";
 
                 const nowHour = new Date().getHours();
-
-                // specialfall: 0–0 = hela dagen från todayStore
-                const forceTodayOnly = (flowStart === 0 && flowStop === 0);
-                if (forceTodayOnly) {
-                    all = merge(todayStore.data);
-                    sourceLabel = "today (forced)";
-                } else if (isNight && nowHour < flowStop) {
+                if (isNight && nowHour < flowStop) {
                     all = merge(yesterdayStore.data).concat(merge(todayStore.data));
                     sourceLabel = "yesterday + today";
                 } else if (isNight && (!Array.isArray(raw_tomorrow) || raw_tomorrow.length === 0)) {
@@ -208,15 +201,14 @@ module.exports = function (RED) {
                     return true;
                 });
 
+                // === Periodhantering ===
                 let baseDate = new Date();
                 const nowHourFixed = baseDate.getHours();
 
-                if (!forceTodayOnly) {
-                    if (isNight && nowHourFixed < flowStop) {
-                        baseDate.setDate(baseDate.getDate() - 1);
-                    } else if (!isNight && nowHourFixed >= flowStop) {
-                        baseDate.setDate(baseDate.getDate() + 1);
-                    }
+                if (isNight && nowHourFixed < flowStop) {
+                    baseDate.setDate(baseDate.getDate() - 1);
+                } else if (!isNight && nowHourFixed >= flowStop && !(flowStart === flowStop)) {
+                    baseDate.setDate(baseDate.getDate() + 1);
                 }
 
                 const { start: startDate, end: endDate } = buildPeriod(baseDate, flowStart, flowStop);
@@ -230,11 +222,17 @@ module.exports = function (RED) {
                 if (inPeriod.length === 0) {
                     node.status({ fill: "yellow", shape: "ring", text: "Waiting for Nordpool data" });
                     newMsg.payload = { state: null, attributes: { info: "No valid times, waiting for data" } };
-                    node.send([null, null, newMsg, null]);
+                    const haMsg = node.haEntity && node.haEntity.trim() !== "" ? {
+                        payload: {
+                            action: "input_number.set_value",
+                            data: { entity_id: node.haEntity, value: node.forceValue }
+                        }
+                    } : null;
+                    node.send([null, { payload: node.payloadOff }, newMsg, haMsg]);
                     return;
                 }
 
-                // === Urval av billigaste/dyraste ===
+                // === Urval av billigaste/dyraste kvartar ===
                 let selected = [];
                 if (node.contiguous_mode) {
                     let bestAvg = Infinity;
@@ -249,6 +247,18 @@ module.exports = function (RED) {
                     }
                     selected = inPeriod.slice(bestStartIdx, bestStartIdx + flowCount);
                     selected.sort((a, b) => new Date(a.start) - new Date(b.start));
+                    const blockStart = new Date(selected[0].start);
+                    const blockStop = new Date(selected[selected.length - 1].start);
+                    blockStop.setMinutes(blockStop.getMinutes() + 15 * flowCount);
+                    const blockAvg = bestAvg;
+
+                    var blockInfo = {
+                        start: toLocalLabel(blockStart),
+                        stop: toLocalLabel(blockStop),
+                        avg: `${blockAvg.toFixed(2)}Öre`
+                    };
+
+                    context.set("selected_for_period", { label: periodLabel, selected: selected, block: blockInfo });
                 } else {
                     if (node.invert_selection) {
                         inPeriod.sort((a, b) => b.value - a.value);
@@ -257,6 +267,7 @@ module.exports = function (RED) {
                     }
                     selected = inPeriod.slice(0, flowCount);
                     selected.sort((a, b) => new Date(a.start) - new Date(b.start));
+                    context.set("selected_for_period", { label: periodLabel, selected: selected });
                 }
 
                 let refPrice = node.invert_selection
@@ -270,29 +281,48 @@ module.exports = function (RED) {
                 });
 
                 attr.count = selected.length;
-                attr.mode = isNight ? "natt" : "dag";
+                attr.mode = isNight ? "night" : "day";
                 attr.search_period = periodLabel;
                 attr.reference_price = `${refPrice.toFixed(2)}Öre`;
-                attr.selection_mode = node.invert_selection ? "dyraste" : "billigaste";
+                attr.selection_mode = node.invert_selection ? "expensive" : "cheap";
                 attr.data_source = sourceLabel;
+                attr.contiguous_mode = node.contiguous_mode ? "on�" : "off";
+
+                if (node.contiguous_mode && context.get("selected_for_period")?.block) {
+                    const b = context.get("selected_for_period").block;
+                    attr.block_mode_start = b.start;
+                    attr.block_mode_stop = b.stop;
+                    attr.block_mode_average = b.avg;
+                }
 
                 newMsg.payload = { state: refPrice, attributes: attr };
 
                 const now = new Date();
                 let active = selected.some(v => {
                     const entryStart = new Date(v.start);
-                    const entryEnd = new Date(entryStart.getTime() + 60 * 60 * 1000);
+                    const entryEnd = new Date(entryStart.getTime() + 15 * 60 * 1000);
                     return now >= entryStart && now < entryEnd;
                 });
 
                 node.status({
                     fill: active ? "green" : "grey",
                     shape: "dot",
-                    text: `${String(flowStart).padStart(2, "0")}→${String(flowStop).padStart(2, "0")} (${flowCount}x ${node.invert_selection ? "dyraste" : "billigaste"})`
+                    text: `${String(flowStart).padStart(2, "0")}→${String(flowStop).padStart(2, "0")} (${flowCount}x ${node.invert_selection ? "expensive" : "cheap"})`
                 });
 
-                if (active) node.send([{ payload: node.payloadOn }, null, newMsg, null]);
-                else node.send([null, { payload: node.payloadOff }, newMsg, null]);
+                const haValue = isNaN(refPrice) ? node.forceValue : refPrice;
+                const haMsg = node.haEntity && node.haEntity.trim() !== "" ? {
+                    payload: {
+                        action: "input_number.set_value",
+                        data: { entity_id: node.haEntity, value: haValue }
+                    }
+                } : null;
+
+                if (active) {
+                    node.send([{ payload: node.payloadOn }, null, newMsg, haMsg]);
+                } else {
+                    node.send([null, { payload: node.payloadOff }, newMsg, haMsg]);
+                }
 
             } catch (err) {
                 node.error(`Error in Nordpool analysis: ${err.message}`);
