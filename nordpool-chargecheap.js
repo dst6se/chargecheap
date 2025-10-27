@@ -44,7 +44,7 @@ module.exports = function (RED) {
                 if (isNaN(num)) return null;
                 num = Math.floor(num);
                 if (num < 0) num = 0;
-                if (num > 95) num = 95; // stöd för kvartbaserad logik
+                if (num > 95) num = 95;
                 return num;
             }
 
@@ -75,8 +75,9 @@ module.exports = function (RED) {
 
             try {
                 var newMsg = {};
-                const data = (msg.data?.attributes || msg.data?.new_state?.attributes) || {}; // smart autodetect
+                const data = (msg.data?.attributes || msg.data?.new_state?.attributes) || {};
                 const isNight = flowStart > flowStop;
+                const fullDayToday = (flowStart === flowStop); // ✅ Nytt: hela dagen
 
                 const valuesAreInOres =
                     data.price_in_cents === true ||
@@ -102,26 +103,19 @@ module.exports = function (RED) {
                         .replace(",", "");
                 }
 
-                // ✅ Uppdaterad buildPeriod()
                 function buildPeriod(baseDate, fromHour, toHour) {
                     const start = new Date(baseDate);
                     start.setHours(fromHour, 0, 0, 0);
                     const end = new Date(baseDate);
 
-                    // 🔹 Om start == stop ⇒ hela dygnet
-                    if (fromHour === toHour) {
-                        end.setDate(start.getDate() + 1); // nästa dag
-                        end.setHours(fromHour, 0, 0, 0);
-                        return { start, end };
-                    }
-
-                    // 🔹 Om perioden går över midnatt
-                    if (fromHour > toHour) {
+                    if (fullDayToday) {
+                        end.setHours(23, 59, 59, 999);
+                    } else if (fromHour > toHour) {
                         end.setDate(end.getDate() + 1);
+                        end.setHours(toHour, 0, 0, 0);
+                    } else {
+                        end.setHours(toHour, 0, 0, 0);
                     }
-
-                    // 🔹 Exakt sluttid utan +1 timme
-                    end.setHours(toHour, 0, 0, 0);
 
                     return { start, end };
                 }
@@ -201,13 +195,12 @@ module.exports = function (RED) {
                     return true;
                 });
 
-                // === Periodhantering ===
                 let baseDate = new Date();
                 const nowHourFixed = baseDate.getHours();
 
                 if (isNight && nowHourFixed < flowStop) {
                     baseDate.setDate(baseDate.getDate() - 1);
-                } else if (!isNight && nowHourFixed >= flowStop && !(flowStart === flowStop)) {
+                } else if (!isNight && nowHourFixed >= flowStop && !fullDayToday) {
                     baseDate.setDate(baseDate.getDate() + 1);
                 }
 
@@ -232,7 +225,6 @@ module.exports = function (RED) {
                     return;
                 }
 
-                // === Urval av billigaste/dyraste kvartar ===
                 let selected = [];
                 if (node.contiguous_mode) {
                     let bestAvg = Infinity;
@@ -249,7 +241,7 @@ module.exports = function (RED) {
                     selected.sort((a, b) => new Date(a.start) - new Date(b.start));
                     const blockStart = new Date(selected[0].start);
                     const blockStop = new Date(selected[selected.length - 1].start);
-                    blockStop.setMinutes(blockStop.getMinutes() + 15 * flowCount);
+                    blockStop.setMinutes(blockStop.getMinutes() + 15);
                     const blockAvg = bestAvg;
 
                     var blockInfo = {
@@ -286,8 +278,31 @@ module.exports = function (RED) {
                 attr.reference_price = `${refPrice.toFixed(2)}Öre`;
                 attr.selection_mode = node.invert_selection ? "expensive" : "cheap";
                 attr.data_source = sourceLabel;
-                attr.contiguous_mode = node.contiguous_mode ? "on�" : "off";
+                attr.contiguous_mode = node.contiguous_mode ? "on" : "off";
 
+                // === Lägg till Max/Min info ===
+                if (selected.length > 0) {
+                    let maxIndex = 0;
+                    let minIndex = 0;
+                    let maxValue = selected[0].value;
+                    let minValue = selected[0].value;
+
+                    selected.forEach((v, i) => {
+                        if (v.value > maxValue) {
+                            maxValue = v.value;
+                            maxIndex = i;
+                        }
+                        if (v.value < minValue) {
+                            minValue = v.value;
+                            minIndex = i;
+                        }
+                    });
+
+                    attr.max_time = `Time ${String(maxIndex + 1).padStart(2, "0")} :: ${maxValue.toFixed(2)}Öre`;
+                    attr.min_time = `Time ${String(minIndex + 1).padStart(2, "0")} :: ${minValue.toFixed(2)}Öre`;
+                }
+
+                // === Blockinfo ===
                 if (node.contiguous_mode && context.get("selected_for_period")?.block) {
                     const b = context.get("selected_for_period").block;
                     attr.block_mode_start = b.start;
@@ -298,11 +313,28 @@ module.exports = function (RED) {
                 newMsg.payload = { state: refPrice, attributes: attr };
 
                 const now = new Date();
+
                 let active = selected.some(v => {
                     const entryStart = new Date(v.start);
                     const entryEnd = new Date(entryStart.getTime() + 15 * 60 * 1000);
                     return now >= entryStart && now < entryEnd;
                 });
+
+                const outsidePeriod = !(now >= startDate && now < endDate);
+
+                const haMsgInside = node.haEntity && node.haEntity.trim() !== "" ? {
+                    payload: {
+                        action: "input_number.set_value",
+                        data: { entity_id: node.haEntity, value: refPrice }
+                    }
+                } : null;
+
+                const haMsgOutside = node.haEntity && node.haEntity.trim() !== "" ? {
+                    payload: {
+                        action: "input_number.set_value",
+                        data: { entity_id: node.haEntity, value: node.forceValue }
+                    }
+                } : null;
 
                 node.status({
                     fill: active ? "green" : "grey",
@@ -310,18 +342,12 @@ module.exports = function (RED) {
                     text: `${String(flowStart).padStart(2, "0")}→${String(flowStop).padStart(2, "0")} (${flowCount}x ${node.invert_selection ? "expensive" : "cheap"})`
                 });
 
-                const haValue = isNaN(refPrice) ? node.forceValue : refPrice;
-                const haMsg = node.haEntity && node.haEntity.trim() !== "" ? {
-                    payload: {
-                        action: "input_number.set_value",
-                        data: { entity_id: node.haEntity, value: haValue }
-                    }
-                } : null;
-
-                if (active) {
-                    node.send([{ payload: node.payloadOn }, null, newMsg, haMsg]);
+                if (outsidePeriod || isNaN(refPrice)) {
+                    node.send([null, { payload: node.payloadOff }, newMsg, haMsgOutside]);
+                } else if (active) {
+                    node.send([{ payload: node.payloadOn }, null, newMsg, haMsgInside]);
                 } else {
-                    node.send([null, { payload: node.payloadOff }, newMsg, haMsg]);
+                    node.send([null, { payload: node.payloadOff }, newMsg, haMsgInside]);
                 }
 
             } catch (err) {
