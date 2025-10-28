@@ -39,7 +39,7 @@ The node reacts to several types of input messages:
 
 | Property | Type | Description |
 |-----------|------|-------------|
-| `msg.data` | object | Expected to contain Nordpool price data, e.g. from `HA nordpool price node (event_data` |
+| `msg.data` | object | Expected to contain Nordpool price data, e.g. from `HA nordpool price node (event_data)` |
 | `msg.start` | number | Override start hour (0–23) |
 | `msg.stop` | number | Override stop hour (0–23) |
 | `msg.count` | number | Override number of intervals |
