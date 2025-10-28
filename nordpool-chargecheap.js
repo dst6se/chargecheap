@@ -23,10 +23,35 @@ module.exports = function (RED) {
             }
 
             const haEnabled = context.get("ha_enabled");
-            if (haEnabled === false) {
-                // Endast status, inga returer/blockeringar
-                node.status({ fill: "yellow", shape: "ring", text: "HA disabled (manual override)" });
+
+if (haEnabled === false) {
+    node.status({ fill: "yellow", shape: "ring", text: "HA disabled (manual override)" });
+
+    // Skicka endast force_value till HA-utgången (4)
+    const haMsg = node.haEntity && node.haEntity.trim() !== "" ? {
+        payload: {
+            action: "input_number.set_value",
+            data: { entity_id: node.haEntity, value: node.forceValue }
+        }
+    } : null;
+
+    // Skicka också ett statusobjekt till output 3 så att HA ser läget
+    const statusMsg = {
+        payload: {
+            state: "disabled",
+            attributes: {
+                info: "HA disabled (manual override)",
+                ha_enable: "off",
+                force_value_sent: node.forceValue
             }
+        }
+    };
+
+    // Skicka OFF på utgång 2 (säkerhetsmässigt), samt status på 3 och force_value på 4
+    node.send([null, { payload: node.payloadOff }, statusMsg, haMsg]);
+    return;
+}
+
 
             // --- Reset context ---
             if (msg.reset !== undefined) {
