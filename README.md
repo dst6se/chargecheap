@@ -1,64 +1,67 @@
-# node-red-contrib-nordpool-chargecheap
+# ⚡ Nordpool ChargeCheap (Node-RED Custom Node)
 
-A Node-RED node for analyzing Nordpool electricity prices and automatically selecting the cheapest (or most expensive) time periods for charging or automation purposes.
-
----
-
-## 🌍 Features
-
-- Selects the **cheapest** or **most expensive** time slots within a defined window  
-- Supports both **individual selection** and **contiguous block mode**  
-- Supports **Home Assistant** integration via `input_number` entity  
-- Dynamic configuration via incoming `msg` payloads  
-- Smart handling for overnight periods (start > stop)  
-- Supports force-value override when outside the active period  
-- Optional **manual HA override** with `msg.ha_enable`
+A Node-RED node that analyzes Nordpool electricity prices and selects the cheapest (or most expensive, if inverted) time periods within a defined window.
 
 ---
 
-## ⚙️ Node Configuration
+## ✨ Features
 
-| Field | Description |
-|-------|-------------|
-| **Name** | Display name for the node |
-| **Start hour** | Starting hour (0–23) of the selection window |
-| **Stop hour** | Ending hour (0–23) of the selection window |
-| **Count** | Number of 15-minute intervals to select (e.g. `4` = 1 hour) |
-| **Invert selection** | If checked, selects the *most expensive* periods instead of the cheapest |
-| **Contiguous block mode** | If checked, selects one continuous block instead of individual intervals |
-| **Payload ON** | Payload sent to output 1 during active (cheap) period |
-| **Payload OFF** | Payload sent to output 2 during inactive period |
-| **Force value outside period** | Value sent to HA entity when outside the active window |
-| **Home Assistant entity** | HA entity ID (e.g. `input_number.elpris`) for price reporting |
+- 🕓 Supports **start**, **stop**, and **count** windows (in 15-minute steps)  
+- 🔁 Optional **invert mode** → select most expensive periods  
+- 🔗 Optional **contiguous block mode** → find one continuous cheap block  
+- 🏠 Home Assistant integration via entity and `ha_enable` control  
+- 💬 4 separate outputs for clear flow design  
+- 🧠 Context storage for today / tomorrow data  
+- 🌙 Handles overnight periods (start > stop)  
+- 📊 MQTT-friendly JSON payload on output 3  
 
 ---
 
-## 💬 Inputs
+## 🔌 Outputs
 
-The node reacts to several types of input messages:
+| Output | Description |
+|:-------|:-------------|
+| **1** | “ON” payload (`msg.payload = payload_on`) |
+| **2** | “OFF” payload (`msg.payload = payload_off`) |
+| **3** | **JSON status** object → contains analysis result and current state. <br>Perfect for use with MQTT sensors in Home Assistant (`sensor.nordpool_chargecheap_status`). |
+| **4** | Home Assistant command object (`input_number.set_value` action) <br>Used to update an entity with current or forced value. |
+
+---
+
+## 📥 Inputs (`msg`)
 
 | Property | Type | Description |
-|-----------|------|-------------|
-| `msg.data` | object | Expected to contain Nordpool price data, e.g. from `HA nordpool price node (event_data)` |
-| `msg.start` | number | Override start hour (0–23) |
-| `msg.stop` | number | Override stop hour (0–23) |
-| `msg.count` | number | Override number of intervals |
-| `msg.ha_enable` | string | `"on"` → normal mode; `"off"` → HA override active (output 4 only) |
-| `msg.reset` | any | Clears all stored context and resets node state |
+|:----------|:-----|:------------|
+| **msg.data** | object | Nordpool data object with `attributes.raw_today` and `attributes.raw_tomorrow`. <br>Fully compatible with Home Assistant’s Nordpool sensor (`event_data.data`). |
+| **msg.start** | number / string | Start hour (0–23). Overrides node config. |
+| **msg.stop** | number / string | Stop hour (0–23). Overrides node config. |
+| **msg.count** | number / string | Number of 15-minute intervals to select (1 = 15 min, 4 = 1 hour). |
+| **msg.ha_enable** | `"on"` / `"off"` | Enables or disables Home Assistant integration. <br>When `"off"`, sends only to output 4 with `force_value` and shows “HA disabled (manual override)”. |
+| **msg.reset** | any | Clears stored context (today/tomorrow data). Node reports “Context reset”. |
 
-Example input:
+---
+
+## 🏡 Home Assistant Integration
+
+This node works directly with Home Assistant’s **Nordpool integration**.
+
+You can connect a Home Assistant event node and send its `event_data.data` output directly into this node.  
+
+### Example Input
+
 ```json
 {
-  "start": 8,
-  "stop": 22,
-  "count": 12,
-  "ha_enable": "on",
   "data": {
     "attributes": {
-      "raw_today": [...],
-      "raw_tomorrow": [...],
-      "unit_of_measurement": "SEK/kWh"
+      "raw_today": [
+        { "start": "2025-10-28T00:00:00+01:00", "value": 0.72 },
+        { "start": "2025-10-28T01:00:00+01:00", "value": 0.69 }
+      ],
+      "raw_tomorrow": [
+        { "start": "2025-10-29T00:00:00+01:00", "value": 0.81 }
+      ],
+      "unit_of_measurement": "SEK/kWh",
+      "region": "SE3"
     }
   }
 }
-
