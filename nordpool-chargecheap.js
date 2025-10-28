@@ -3,7 +3,6 @@ module.exports = function (RED) {
         RED.nodes.createNode(this, config);
         const node = this;
 
-        // === Manual configuration ===
         node.manualStart = Number(config.start) || null;
         node.manualStop = Number(config.stop) || null;
         node.manualCount = Number(config.count) || null;
@@ -16,6 +15,18 @@ module.exports = function (RED) {
 
         node.on("input", function (msg) {
             const context = node.context();
+
+            // --- Hantera ha_enable override ---
+            if (msg.ha_enable !== undefined) {
+                const haEnabled = String(msg.ha_enable).toLowerCase() === "on";
+                context.set("ha_enabled", haEnabled);
+            }
+
+            const haEnabled = context.get("ha_enabled");
+            if (haEnabled === false) {
+                // Endast status, inga returer/blockeringar
+                node.status({ fill: "yellow", shape: "ring", text: "HA disabled (manual override)" });
+            }
 
             // --- Reset context ---
             if (msg.reset !== undefined) {
@@ -33,7 +44,7 @@ module.exports = function (RED) {
                 return;
             }
 
-            // --- Normalize input values (start/stop/count) ---
+            // --- Normalize input values ---
             function normalizeInput(value) {
                 if (value === undefined || value === null) return null;
                 let num = Number(value);
@@ -77,7 +88,7 @@ module.exports = function (RED) {
                 var newMsg = {};
                 const data = (msg.data?.attributes || msg.data?.new_state?.attributes) || {};
                 const isNight = flowStart > flowStop;
-                const fullDayToday = (flowStart === flowStop); // ✅ Nytt: hela dagen
+                const fullDayToday = (flowStart === flowStop);
 
                 const valuesAreInOres =
                     data.price_in_cents === true ||
@@ -107,7 +118,6 @@ module.exports = function (RED) {
                     const start = new Date(baseDate);
                     start.setHours(fromHour, 0, 0, 0);
                     const end = new Date(baseDate);
-
                     if (fullDayToday) {
                         end.setHours(23, 59, 59, 999);
                     } else if (fromHour > toHour) {
@@ -116,7 +126,6 @@ module.exports = function (RED) {
                     } else {
                         end.setHours(toHour, 0, 0, 0);
                     }
-
                     return { start, end };
                 }
 
@@ -225,6 +234,7 @@ module.exports = function (RED) {
                     return;
                 }
 
+                // === Din befintliga logik fortsätter här, oförändrad ===
                 let selected = [];
                 if (node.contiguous_mode) {
                     let bestAvg = Infinity;
@@ -280,7 +290,6 @@ module.exports = function (RED) {
                 attr.data_source = sourceLabel;
                 attr.contiguous_mode = node.contiguous_mode ? "on" : "off";
 
-                // === Lägg till Max/Min info ===
                 if (selected.length > 0) {
                     let maxIndex = 0;
                     let minIndex = 0;
@@ -302,7 +311,6 @@ module.exports = function (RED) {
                     attr.min_time = `Time ${String(minIndex + 1).padStart(2, "0")} :: ${minValue.toFixed(2)}Öre`;
                 }
 
-                // === Blockinfo ===
                 if (node.contiguous_mode && context.get("selected_for_period")?.block) {
                     const b = context.get("selected_for_period").block;
                     attr.block_mode_start = b.start;
@@ -320,21 +328,39 @@ module.exports = function (RED) {
                     return now >= entryStart && now < entryEnd;
                 });
 
-                const outsidePeriod = !(now >= startDate && now < endDate);
+                let outsidePeriod = !(now >= startDate && now < endDate);
 
-                const haMsgInside = node.haEntity && node.haEntity.trim() !== "" ? {
-                    payload: {
-                        action: "input_number.set_value",
-                        data: { entity_id: node.haEntity, value: refPrice }
-                    }
-                } : null;
+                if (flowStart === flowStop) {
+                    outsidePeriod = false;
+                }
 
-                const haMsgOutside = node.haEntity && node.haEntity.trim() !== "" ? {
-                    payload: {
-                        action: "input_number.set_value",
-                        data: { entity_id: node.haEntity, value: node.forceValue }
-                    }
-                } : null;
+                // === Utgång 4: HA enable-logik ===
+                let haMsgInside;
+                let haMsgOutside;
+
+                if (haEnabled === false) {
+                    haMsgInside = {
+                        payload: {
+                            action: "input_number.set_value",
+                            data: { entity_id: node.haEntity, value: node.forceValue }
+                        }
+                    };
+                    haMsgOutside = haMsgInside;
+                } else {
+                    haMsgInside = node.haEntity && node.haEntity.trim() !== "" ? {
+                        payload: {
+                            action: "input_number.set_value",
+                            data: { entity_id: node.haEntity, value: refPrice }
+                        }
+                    } : null;
+
+                    haMsgOutside = node.haEntity && node.haEntity.trim() !== "" ? {
+                        payload: {
+                            action: "input_number.set_value",
+                            data: { entity_id: node.haEntity, value: node.forceValue }
+                        }
+                    } : null;
+                }
 
                 node.status({
                     fill: active ? "green" : "grey",

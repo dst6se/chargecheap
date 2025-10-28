@@ -87,14 +87,46 @@ RED.nodes.registerType("nordpool-chargecheap", {
 
 <script type="text/html" data-help-name="nordpool-chargecheap">
     <p>
-        <b>Nordpool ChargeCheap</b> väljer de billigaste (eller dyraste om inverterat) tiderna inom ett visst fönster.<br>
-        Stödjer:
+        <b>Nordpool ChargeCheap</b> selects the cheapest (or most expensive if inverted) quarters within a given time window.<br>
+        Supports:
         <ul>
-            <li>Vanligt läge – väljer enskilda billigaste kvartarna</li>
-            <li>Sammanhängande block-läge – hittar billigaste/dyraste blocket</li>
+            <li>Standard mode – selects individual cheapest quarters</li>
+            <li>Contiguous block mode – finds the cheapest/most expensive continuous block</li>
         </ul>
-        <b>Count</b> = antal kvartstimmar (inte timmar).<br>
-        T.ex. 4 betyder 1 timme.
+        <b>Count</b> = number of 15-minute intervals (not hours).<br>
+        Example: 4 means 1 hour.
     </p>
+
+    <h3>Inputs</h3>
+    <ul>
+        <li><code>msg.data</code> – Expected to contain Nordpool price data, e.g.:
+            <pre>{
+  "data": {
+    "attributes": {
+      "raw_today": [...],
+      "raw_tomorrow": [...],
+      "unit_of_measurement": "SEK/kWh"
+    }
+  }
+}</pre>
+        </li>
+        <li><code>msg.start</code>, <code>msg.stop</code>, <code>msg.count</code> – Override configured values for start hour, stop hour, and count.</li>
+        <li><code>msg.ha_enable</code> – "on" = normal mode, "off" = HA override (output 4 sends <i>force_value</i>, outputs 1–3 behave normally).</li>
+        <li><code>msg.reset</code> – Clears all stored context data and resets node state.</li>
+    </ul>
+
+    <h3>Outputs</h3>
+    <ul>
+        <li><b>Output 1</b>: ON payload (<code>payload_on</code>)</li>
+        <li><b>Output 2</b>: OFF payload (<code>payload_off</code>)</li>
+        <li><b>Output 3</b>: Information / analysis result (<code>payload.state</code> and <code>payload.attributes</code>)</li>
+        <li><b>Output 4</b>: Home Assistant message with <code>action</code> and <code>data.entity_id/value</code></li>
+    </ul>
+
+    <h3>Notes</h3>
+    <ul>
+        <li>If <code>msg.ha_enable</code> = "off", a status message <i>HA disabled (manual override)</i> is shown on the node.</li>
+        <li>If start = stop, the full 24h period is considered active.</li>
+    </ul>
 </script>
 
