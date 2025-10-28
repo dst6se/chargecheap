@@ -23,35 +23,10 @@ module.exports = function (RED) {
             }
 
             const haEnabled = context.get("ha_enabled");
-
-if (haEnabled === false) {
-    node.status({ fill: "yellow", shape: "ring", text: "HA disabled (manual override)" });
-
-    // Skicka endast force_value till HA-utgången (4)
-    const haMsg = node.haEntity && node.haEntity.trim() !== "" ? {
-        payload: {
-            action: "input_number.set_value",
-            data: { entity_id: node.haEntity, value: node.forceValue }
-        }
-    } : null;
-
-    // Skicka också ett statusobjekt till output 3 så att HA ser läget
-    const statusMsg = {
-        payload: {
-            state: "disabled",
-            attributes: {
-                info: "HA disabled (manual override)",
-                ha_enable: "off",
-                force_value_sent: node.forceValue
+            // 🟡 Visa status när HA är avstängd (påverkar inget annat)
+            if (haEnabled === false) {
+                node.status({ fill: "yellow", shape: "ring", text: "HA disabled (manual override)" });
             }
-        }
-    };
-
-    // Skicka OFF på utgång 2 (säkerhetsmässigt), samt status på 3 och force_value på 4
-    node.send([null, { payload: node.payloadOff }, statusMsg, haMsg]);
-    return;
-}
-
 
             // --- Reset context ---
             if (msg.reset !== undefined) {
@@ -346,7 +321,6 @@ if (haEnabled === false) {
                 newMsg.payload = { state: refPrice, attributes: attr };
 
                 const now = new Date();
-
                 let active = selected.some(v => {
                     const entryStart = new Date(v.start);
                     const entryEnd = new Date(entryStart.getTime() + 15 * 60 * 1000);
@@ -354,15 +328,9 @@ if (haEnabled === false) {
                 });
 
                 let outsidePeriod = !(now >= startDate && now < endDate);
+                if (flowStart === flowStop) outsidePeriod = false;
 
-                if (flowStart === flowStop) {
-                    outsidePeriod = false;
-                }
-
-                // === Utgång 4: HA enable-logik ===
-                let haMsgInside;
-                let haMsgOutside;
-
+                let haMsgInside, haMsgOutside;
                 if (haEnabled === false) {
                     haMsgInside = {
                         payload: {
@@ -387,11 +355,14 @@ if (haEnabled === false) {
                     } : null;
                 }
 
-                node.status({
-                    fill: active ? "green" : "grey",
-                    shape: "dot",
-                    text: `${String(flowStart).padStart(2, "0")}→${String(flowStop).padStart(2, "0")} (${flowCount}x ${node.invert_selection ? "expensive" : "cheap"})`
-                });
+                // Sätt normal status endast om HA inte är disabled
+                if (haEnabled !== false) {
+                    node.status({
+                        fill: active ? "green" : "grey",
+                        shape: "dot",
+                        text: `${String(flowStart).padStart(2, "0")}→${String(flowStop).padStart(2, "0")} (${flowCount}x ${node.invert_selection ? "expensive" : "cheap"})`
+                    });
+                }
 
                 if (outsidePeriod || isNaN(refPrice)) {
                     node.send([null, { payload: node.payloadOff }, newMsg, haMsgOutside]);
