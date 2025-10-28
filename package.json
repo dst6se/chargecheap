@@ -1,6 +1,6 @@
 {
   "name": "node-red-contrib-nordpool-chargecheap",
-  "version": "1.4.8",
+  "version": "1.4.9",
   "description": "Nordpool price analyzer with smart night/day handling for Node-RED",
   "author": "Danne",
   "license": "MIT",
