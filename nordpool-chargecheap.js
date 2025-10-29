@@ -123,34 +123,48 @@ module.exports = function (RED) {
             return rounded;
         }
 
+        // Optimerad contiguous-selektion med bibehållen logik
+        function selectContiguous(inPeriod, count, invertSelection) {
+            let bestAvg = invertSelection ? -Infinity : Infinity;
+            let bestStartIdx = 0;
+
+            // Prefix-summor för O(1) beräkning av blockmedel
+            const prefix = new Array(inPeriod.length + 1).fill(0);
+            for (let i = 0; i < inPeriod.length; i++) {
+                prefix[i + 1] = prefix[i] + inPeriod[i].value;
+            }
+
+            for (let i = 0; i <= inPeriod.length - count; i++) {
+                const sum = prefix[i + count] - prefix[i];
+                const avg = sum / count;
+                const better = invertSelection ? (avg > bestAvg) : (avg < bestAvg);
+                if (better) {
+                    bestAvg = avg;
+                    bestStartIdx = i;
+                }
+            }
+
+            const selected = inPeriod.slice(bestStartIdx, bestStartIdx + count)
+                .sort((a, b) => new Date(a.start) - new Date(b.start));
+
+            return {
+                selected,
+                meta: {
+                    contiguous: true,
+                    blockAverage: bestAvg,
+                    blockStart: selected[0].start,
+                    blockStop: selected[selected.length - 1].start
+                }
+            };
+        }
+
         function selectCheapOrExpensive(inPeriod, count, invertSelection, contiguousMode) {
             if (inPeriod.length === 0) return { selected: [], meta: {} };
             if (count <= 0) return { selected: [], meta: {} };
             if (count > inPeriod.length) count = inPeriod.length;
 
             if (contiguousMode) {
-                let bestAvg = invertSelection ? -Infinity : Infinity;
-                let bestStartIdx = 0;
-                for (let i = 0; i <= inPeriod.length - count; i++) {
-                    const block = inPeriod.slice(i, i + count);
-                    const avg = block.reduce((sum, v) => sum + v.value, 0) / block.length;
-                    const better = invertSelection ? (avg > bestAvg) : (avg < bestAvg);
-                    if (better) {
-                        bestAvg = avg;
-                        bestStartIdx = i;
-                    }
-                }
-                const selected = inPeriod.slice(bestStartIdx, bestStartIdx + count)
-                    .sort((a, b) => new Date(a.start) - new Date(b.start));
-                return {
-                    selected,
-                    meta: {
-                        contiguous: true,
-                        blockAverage: bestAvg,
-                        blockStart: selected[0].start,
-                        blockStop: selected[selected.length - 1].start
-                    }
-                };
+                return selectContiguous(inPeriod, count, invertSelection);
             } else {
                 const sorted = [...inPeriod].sort((a, b) => invertSelection ? (b.value - a.value) : (a.value - b.value));
                 const selected = sorted.slice(0, count)
@@ -178,18 +192,26 @@ module.exports = function (RED) {
 
             const values = selected.map(v => v.value);
             const refCheap = values.length ? Math.max(...values) : null;
-            // ÅTERSTÄLLD SEMANTIK: vid expensive (invertSelection) ska referens vara LÄGSTA av de dyrt valda (nedre gräns)
             const refExpensive = values.length ? Math.min(...values) : null;
+
+            // Referensprissemantik:
+            // cheap mode  -> högsta priset bland valda billiga tidsluckor (övre gräns för laddning).
+            // expensive mode -> lägsta priset bland valda dyra tidsluckor (nedre gräns för urladdning).
             const reference = invertSelection ? refExpensive : refCheap;
 
             attr.reference_price = reference !== null ? `${reference.toFixed(2)}Öre` : null;
             attr.reference_price_mode = invertSelection ? "expensive_selection_min" : "cheap_selection_max";
+            attr.reference_price_role = invertSelection
+                ? "lower_bound_for_discharging"
+                : "upper_bound_for_charging";
+
             attr.selection_mode = invertSelection ? "expensive" : "cheap";
             attr.count = selected.length;
             attr.search_period = periodLabel;
             attr.data_source = sourceLabel;
             attr.interval_minutes = intervalMinutes;
             attr.contiguous_mode = contiguousMeta.contiguous ? "on" : "off";
+            attr.selection_strategy = contiguousMeta.contiguous ? "contiguous_block" : "discrete_slots";
             attr.rolling_24h = rolling24h ? "on" : "off";
 
             if (contiguousMeta.contiguous && selected.length > 0) {
@@ -223,6 +245,7 @@ module.exports = function (RED) {
             if (msg.ha_enable !== undefined) {
                 const haEnabled = String(msg.ha_enable).toLowerCase() === "on";
                 context.set("ha_enabled", haEnabled);
+                if (cfg.debug) node.debug(`HA enable changed: ${haEnabled}`);
             }
             const haEnabled = context.get("ha_enabled");
 
@@ -244,6 +267,7 @@ module.exports = function (RED) {
 
                 node.status({ fill: "blue", shape: "dot", text: "Full context reset" });
                 node.send([null, null, { payload: "context fully reset" }, null]);
+                if (cfg.debug) node.debug("Context reset executed.");
                 return;
             }
 
@@ -262,6 +286,7 @@ module.exports = function (RED) {
             if ([flowStart, flowStop, flowCount].some(v => v === null || isNaN(v))) {
                 node.status({ fill: "red", shape: "dot", text: "Missing start/stop/count" });
                 node.send([null, null, { payload: { error: "start/stop/count missing" } }, null]);
+                if (cfg.debug) node.debug("Missing essential parameters start/stop/count.");
                 return;
             }
 
@@ -283,6 +308,7 @@ module.exports = function (RED) {
                     if (new Date(prev) < new Date(dataDate)) {
                         context.set("yesterday_data", existingToday);
                         context.set("today_data", null);
+                        if (cfg.debug) node.debug(`Rotated today_data to yesterday_data (${prev} -> ${dataDate}).`);
                     }
                 }
 
@@ -361,7 +387,8 @@ module.exports = function (RED) {
                             state: null,
                             attributes: {
                                 info: "No valid times, waiting for data",
-                                rolling_24h: rolling24h ? "on" : "off"
+                                rolling_24h: rolling24h ? "on" : "off",
+                                calculated_at: new Date().toISOString()
                             }
                         }
                     };
@@ -374,6 +401,7 @@ module.exports = function (RED) {
                         }
                         : null;
                     node.send([null, { payload: cfg.payloadOff }, infoMsg, haMsg]);
+                    if (cfg.debug) node.debug("No data in period; sent waiting status.");
                     return;
                 }
 
@@ -385,7 +413,7 @@ module.exports = function (RED) {
                 const { selected, meta } = selectCheapOrExpensive(inPeriod, flowCount, cfg.invertSelection, cfg.contiguousMode);
 
                 const expectedPoints = Math.round((endDate - startDate) / (intervalMinutes * 60000));
-                const missingPoints = expectedPoints - inPeriod.length;
+                const missingPoints = Math.max(0, expectedPoints - inPeriod.length);
 
                 const { attributes: attr, reference } = buildAttributes(
                     selected,
@@ -397,6 +425,7 @@ module.exports = function (RED) {
                     rolling24h
                 );
 
+                // Extra diagnostik och semantiska attribut
                 const totalHours = (endDate - startDate) / 3600000;
                 attr.total_hours_span = Number(totalHours.toFixed(2));
                 attr.expected_points = expectedPoints;
@@ -404,6 +433,24 @@ module.exports = function (RED) {
                 if (missingPoints > 0) {
                     attr.missing_points = missingPoints;
                     attr.partial_period = true;
+                }
+
+                attr.reference_price_numeric = reference ?? null;
+                attr.calculated_at = new Date().toISOString();
+
+                // Override/normal semantik
+                if (haEnabled === false) {
+                    attr.ha_override = "on";
+                    attr.control_mode = "override";
+                    attr.ha_sent_value = cfg.forceValue;
+                    attr.next_reference_when_enabled = reference ?? null;
+                    attr.reference_price_effective = null; // Visar att den inte används just nu
+                } else {
+                    attr.ha_override = "off";
+                    attr.control_mode = "normal";
+                    attr.ha_sent_value = (reference ?? cfg.forceValue);
+                    attr.next_reference_when_enabled = null;
+                    attr.reference_price_effective = attr.reference_price;
                 }
 
                 const newMsg = { payload: { state: reference, attributes: attr } };
@@ -450,16 +497,20 @@ module.exports = function (RED) {
 
                 if (outsidePeriod || reference === null || isNaN(reference)) {
                     node.send([null, { payload: cfg.payloadOff }, newMsg, haMsgOutside]);
+                    if (cfg.debug) node.debug("Outside period or invalid reference -> OFF.");
                 } else if (active) {
                     node.send([{ payload: cfg.payloadOn }, null, newMsg, haMsgInside]);
+                    if (cfg.debug) node.debug("Active slot -> ON.");
                 } else {
                     node.send([null, { payload: cfg.payloadOff }, newMsg, haMsgInside]);
+                    if (cfg.debug) node.debug("Inside period but not active slot -> OFF (standby).");
                 }
 
             } catch (err) {
                 node.error(`Error in Nordpool analysis: ${err.message}`);
                 node.status({ fill: "red", shape: "ring", text: "Error" });
                 node.send([null, null, { payload: { error: err.message } }, null]);
+                if (cfg.debug) node.debug(`Exception caught: ${err.stack}`);
             }
         });
     }
