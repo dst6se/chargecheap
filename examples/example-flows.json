@@ -1,2 +1,412 @@
+[
+  {
+    "id": "grp_root",
+    "type": "tab",
+    "label": "Nordpool ChargeCheap - Exempel",
+    "disabled": false,
+    "info": "Exempel på hur man använder node-red-contrib-nordpool-chargecheap"
+  },
+
+  /* =========================================================
+   * 1. GRUNDFLÖDE: Enkel billigaste timmar (60-min intervall)
+   * ========================================================= */
+  {
+    "id": "inject_basic_params",
+    "type": "inject",
+    "z": "grp_root",
+    "name": "Parameter (start/stop/count)",
+    "props": [
+      { "p": "start", "v": "22", "vt": "str" },
+      { "p": "stop", "v": "6", "vt": "str" },
+      { "p": "count", "v": "4", "vt": "str" },
+      { "p": "ha_enable", "v": "on", "vt": "str" }
+    ],
+    "repeat": "300",
+    "once": true,
+    "onceDelay": "2",
+    "topic": "",
+    "x": 170,
+    "y": 100,
+    "wires": [["function_basic_data"]]
+  },
+  {
+    "id": "function_basic_data",
+    "type": "function",
+    "z": "grp_root",
+    "name": "Simulerad Nordpool (hourly)",
+    "func": "// Generera 48 timpunkter (idag + imorgon) 60-min intervall\n// Priser slumpas runt 80–180 Öre\nfunction genDay(baseDate, dayOffset) {\n    const arr = [];\n    const d = new Date(baseDate);\n    d.setHours(0,0,0,0);\n    d.setDate(d.getDate() + dayOffset);\n    for (let h=0; h<24; h++) {\n        const ts = new Date(d.getTime());\n        ts.setHours(h);\n        const price = 80 + Math.random()*100; // 80–180\n        arr.push({ start: ts.toISOString(), value: Number(price.toFixed(2)) });\n    }\n    return arr;\n}\nconst now = new Date();\nmsg.data = {\n    attributes: {\n        raw_today: genDay(now, 0),\n        raw_tomorrow: genDay(now, 1),\n        unit_of_measurement: \"SEK/kWh\" // Konverteras till Öre via *100\n    }\n};\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 430,
+    "y": 100,
+    "wires": [["nordpool_basic"]]
+  },
+  {
+    "id": "nordpool_basic",
+    "type": "nordpool-chargecheap",
+    "z": "grp_root",
+    "name": "ChargeCheap (Basic)",
+    "start": "",
+    "stop": "",
+    "count": "",
+    "payload_on": "on",
+    "payload_off": "off",
+    "force_value": "-600",
+    "ha_entity": "input_number.elpris_ref",
+    "invert_selection": false,
+    "contiguous_mode": false,
+    "debug": true,
+    "x": 690,
+    "y": 100,
+    "wires": [
+      ["debug_on_basic"],
+      ["debug_off_basic"],
+      ["debug_state_basic"],
+      ["debug_ha_basic"]
+    ]
+  },
+  {
+    "id": "debug_on_basic",
+    "type": "debug",
+    "z": "grp_root",
+    "name": "ON (Active slot)",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "payload",
+    "targetType": "msg",
+    "x": 920,
+    "y": 60,
+    "wires": []
+  },
+  {
+    "id": "debug_off_basic",
+    "type": "debug",
+    "z": "grp_root",
+    "name": "OFF (Inactive)",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "payload",
+    "targetType": "msg",
+    "x": 920,
+    "y": 100,
+    "wires": []
+  },
+  {
+    "id": "debug_state_basic",
+    "type": "debug",
+    "z": "grp_root",
+    "name": "STATE + ATTR",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "payload",
+    "targetType": "msg",
+    "x": 930,
+    "y": 140,
+    "wires": []
+  },
+  {
+    "id": "debug_ha_basic",
+    "type": "debug",
+    "z": "grp_root",
+    "name": "HA service msg",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "payload",
+    "targetType": "msg",
+    "x": 930,
+    "y": 180,
+    "wires": []
+  },
+
+  /* =========================================================
+   * 2. AVANCERAT FLÖDE: 15-min intervall + contiguous block
+   * ========================================================= */
+  {
+    "id": "inject_adv_params",
+    "type": "inject",
+    "z": "grp_root",
+    "name": "Adv param (rolling 24h)",
+    "props": [
+      { "p": "start", "v": "16", "vt": "str" },
+      { "p": "stop", "v": "16", "vt": "str" },
+      { "p": "count", "v": "12", "vt": "str" },
+      { "p": "ha_enable", "v": "on", "vt": "str" }
+    ],
+    "repeat": "900",
+    "once": true,
+    "onceDelay": "3",
+    "topic": "",
+    "x": 170,
+    "y": 300,
+    "wires": [["function_adv_data"]]
+  },
+  {
+    "id": "function_adv_data",
+    "type": "function",
+    "z": "grp_root",
+    "name": "Simulerad 15-min data (today+tomorrow)",
+    "func": "// Skapa 96 punkter per dag (00:00–23:45) 15-min intervall.\nfunction genDay(baseDate, offset) {\n    const arr = [];\n    const base = new Date(baseDate);\n    base.setHours(0,0,0,0);\n    base.setDate(base.getDate() + offset);\n    for (let i=0; i<96; i++) {\n        const ts = new Date(base.getTime() + i * 15 * 60000);\n        // Variera med en mild sinus + slump\n        const hour = ts.getHours() + ts.getMinutes()/60;\n        const basePrice = 100 + 30*Math.sin(hour/24 * Math.PI*2); // svängning 70–130\n        const finalPrice = basePrice + Math.random()*20; // upp till +20 variation\n        arr.push({ start: ts.toISOString(), value: Number(finalPrice.toFixed(2)) });\n    }\n    return arr;\n}\nconst now = new Date();\nmsg.data = {\n    attributes: {\n        raw_today: genDay(now, 0),\n        raw_tomorrow: genDay(now, 1),\n        unit_of_measurement: \"Öre/kWh\" // Ingen konvertering behövs\n    }\n};\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "x": 430,
+    "y": 300,
+    "wires": [["nordpool_adv"]]
+  },
+  {
+    "id": "nordpool_adv",
+    "type": "nordpool-chargecheap",
+    "z": "grp_root",
+    "name": "ChargeCheap (Rolling 24h + contiguous)",
+    "start": "",
+    "stop": "",
+    "count": "",
+    "payload_on": "on",
+    "payload_off": "off",
+    "force_value": "-600",
+    "ha_entity": "input_number.elpris_ref",
+    "invert_selection": false,
+    "contiguous_mode": true,
+    "debug": true,
+    "x": 720,
+    "y": 300,
+    "wires": [
+      ["debug_on_adv"],
+      ["debug_off_adv"],
+      ["debug_state_adv"],
+      ["debug_ha_adv"]
+    ]
+  },
+  {
+    "id": "debug_on_adv",
+    "type": "debug",
+    "z": "grp_root",
+    "name": "ON (Adv)",
+    "active": true,
+    "complete": "payload",
+    "targetType": "msg",
+    "x": 940,
+    "y": 260,
+    "wires": []
+  },
+  {
+    "id": "debug_off_adv",
+    "type": "debug",
+    "z": "grp_root",
+    "name": "OFF (Adv)",
+    "active": true,
+    "complete": "payload",
+    "targetType": "msg",
+    "x": 940,
+    "y": 300,
+    "wires": []
+  },
+  {
+    "id": "debug_state_adv",
+    "type": "debug",
+    "z": "grp_root",
+    "name": "STATE + ATTR (Adv)",
+    "active": true,
+    "complete": "payload",
+    "targetType": "msg",
+    "x": 950,
+    "y": 340,
+    "wires": []
+  },
+  {
+    "id": "debug_ha_adv",
+    "type": "debug",
+    "z": "grp_root",
+    "name": "HA service (Adv)",
+    "active": true,
+    "complete": "payload",
+    "targetType": "msg",
+    "x": 950,
+    "y": 380,
+    "wires": []
+  },
+
+  /* =========================================================
+   * 3. EXPENSIVE MODE DEMO (urladdning)
+   * ========================================================= */
+  {
+    "id": "inject_exp_params",
+    "type": "inject",
+    "z": "grp_root",
+    "name": "Expensive mode params",
+    "props": [
+      { "p": "start", "v": "7", "vt": "str" },
+      { "p": "stop", "v": "23", "vt": "str" },
+      { "p": "count", "v": "6", "vt": "str" },
+      { "p": "ha_enable", "v": "on", "vt": "str" }
+    ],
+    "repeat": "600",
+    "once": true,
+    "onceDelay": "4",
+    "topic": "",
+    "x": 170,
+    "y": 500,
+    "wires": [["function_exp_data"]]
+  },
+  {
+    "id": "function_exp_data",
+    "type": "function",
+    "z": "grp_root",
+    "name": "Simulerad hourly (Expensive)",
+    "func": "// 24 timpunkter idag + 24 imorgon\n// Vi gör en prisprofil som stiger runt lunch och kväll\nfunction gen(baseDate, offset){\n    const arr = [];\n    const d = new Date(baseDate);\n    d.setHours(0,0,0,0);\n    d.setDate(d.getDate()+offset);\n    for (let h=0; h<24; h++){\n        const ts = new Date(d.getTime());\n        ts.setHours(h);\n        // Enkel profil: morgon låg, mitt på dagen högre, sen kväll peak\n        let base = 70 + 20*Math.sin((h-6)/24 * Math.PI*2) + (h>17 ? 30 : 0);\n        base += Math.random()*10; // lite noise\n        arr.push({ start: ts.toISOString(), value: Number(base.toFixed(2)) });\n    }\n    return arr;\n}\nconst now = new Date();\nmsg.data = {\n  attributes: {\n    raw_today: gen(now,0),\n    raw_tomorrow: gen(now,1),\n    unit_of_measurement: \"Öre/kWh\"\n  }\n};\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "x": 440,
+    "y": 500,
+    "wires": [["nordpool_exp"]]
+  },
+  {
+    "id": "nordpool_exp",
+    "type": "nordpool-chargecheap",
+    "z": "grp_root",
+    "name": "ChargeCheap (Expensive Mode)",
+    "start": "",
+    "stop": "",
+    "count": "",
+    "payload_on": "on",
+    "payload_off": "off",
+    "force_value": "-600",
+    "ha_entity": "input_number.elpris_disch_ref",
+    "invert_selection": true,
+    "contiguous_mode": false,
+    "debug": true,
+    "x": 700,
+    "y": 500,
+    "wires": [
+      ["debug_on_exp"],
+      ["debug_off_exp"],
+      ["debug_state_exp"],
+      ["debug_ha_exp"]
+    ]
+  },
+  {
+    "id": "debug_on_exp",
+    "type": "debug",
+    "z": "grp_root",
+    "name": "ON (Expensive slot)",
+    "active": true,
+    "complete": "payload",
+    "targetType": "msg",
+    "x": 940,
+    "y": 460,
+    "wires": []
+  },
+  {
+    "id": "debug_off_exp",
+    "type": "debug",
+    "z": "grp_root",
+    "name": "OFF (Exp Mode)",
+    "active": true,
+    "complete": "payload",
+    "targetType": "msg",
+    "x": 940,
+    "y": 500,
+    "wires": []
+  },
+  {
+    "id": "debug_state_exp",
+    "type": "debug",
+    "z": "grp_root",
+    "name": "STATE + ATTR (Exp)",
+    "active": true,
+    "complete": "payload",
+    "targetType": "msg",
+    "x": 950,
+    "y": 540,
+    "wires": []
+  },
+  {
+    "id": "debug_ha_exp",
+    "type": "debug",
+    "z": "grp_root",
+    "name": "HA service (Exp)",
+    "active": true,
+    "complete": "payload",
+    "targetType": "msg",
+    "x": 950,
+    "y": 580,
+    "wires": []
+  },
+
+  /* =========================================================
+   * 4. OVERRIDE DEMO (aktivera/avaktivera ha_enable)
+   * ========================================================= */
+  {
+    "id": "inject_override_off",
+    "type": "inject",
+    "z": "grp_root",
+    "name": "HA Override OFF (force_value)",
+    "props": [
+      { "p": "ha_enable", "v": "off", "vt": "str" }
+    ],
+    "repeat": "",
+    "once": false,
+    "x": 220,
+    "y": 640,
+    "wires": [["change_pass_to_all"]]
+  },
+  {
+    "id": "inject_override_on",
+    "type": "inject",
+    "z": "grp_root",
+    "name": "HA Override ON (normal)",
+    "props": [
+      { "p": "ha_enable", "v": "on", "vt": "str" }
+    ],
+    "repeat": "",
+    "once": false,
+    "x": 220,
+    "y": 680,
+    "wires": [["change_pass_to_all"]]
+  },
+  {
+    "id": "change_pass_to_all",
+    "type": "change",
+    "z": "grp_root",
+    "name": "Sprid override till alla",
+    "rules": [],
+    "action": "",
+    "property": "",
+    "from": "",
+    "to": "",
+    "reg": false,
+    "x": 470,
+    "y": 660,
+    "wires": [["nordpool_basic","nordpool_adv","nordpool_exp"]]
+  },
+
+  /* =========================================================
+   * 5. RESET DEMO
+   * ========================================================= */
+  {
+    "id": "inject_reset",
+    "type": "inject",
+    "z": "grp_root",
+    "name": "RESET context",
+    "props": [
+      { "p": "reset", "v": "true", "vt": "bool" }
+    ],
+    "repeat": "",
+    "once": false,
+    "x": 190,
+    "y": 740,
+    "wires": [["nordpool_basic","nordpool_adv","nordpool_exp"]]
+  }
+]
 
 
