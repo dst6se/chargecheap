@@ -346,10 +346,11 @@ Open to:
 
 ## 🖼 Screenshots
 
-<img width="972" height="705" alt="Screenshot 2025-10-26 at 16 11 16" src="https://github.com/user-attachments/assets/0c212234-0508-4e5e-9f1b-92c298642fbe" />
-<img width="469" height="578" alt="Screenshot 2025-10-26 at 16 09 24" src="https://github.com/user-attachments/assets/16784e39-fc4b-4cbe-b3c9-ede6a024961a" />
-<img width="429" height="553" alt="Screenshot 2025-10-26 at 16 52 55" src="https://github.com/user-attachments/assets/6c7b9838-ba13-4f00-8def-bb926afb062b" />
-<img width="560" height="799" alt="Screenshot 2025-10-26 at 16 55 00" src="https://github.com/user-attachments/assets/8f1b74a1-ef2f-4758-bd1f-0534f6345bbf" />
+<img width="937" height="758" alt="Screenshot 2025-10-29 at 21 10 16" src="https://github.com/user-attachments/assets/047c7570-3bff-45c2-bd7b-a1867abb6c98" />
+
+<img width="488" height="840" alt="Screenshot 2025-10-29 at 21 12 33" src="https://github.com/user-attachments/assets/785defa5-7bec-46d8-9e4d-3bf7dbed92f9" />
+
+<img width="550" height="684" alt="Screenshot 2025-10-29 at 21 12 49" src="https://github.com/user-attachments/assets/36480c6c-d880-403a-b50f-5ead9efb36f4" />
 
 ---
 
