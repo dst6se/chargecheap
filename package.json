@@ -1,14 +1,45 @@
 {
   "name": "node-red-contrib-nordpool-chargecheap",
-  "version": "1.5.1",
-  "description": "Nordpool price analyzer with smart night/day handling for Node-RED",
+  "version": "1.5.2",
+  "description": "Nordpool price analyzer with smart night/day, rolling 24h and HA override integration for Node-RED",
   "author": "Danne",
   "license": "MIT",
-  "keywords": ["node-red", "nordpool", "electricity", "price", "automation"],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/dst6se/node-red-contrib-nordpool-chargecheap.git"
+  },
+  "homepage": "https://github.com/dst6se/node-red-contrib-nordpool-chargecheap#readme",
+  "bugs": {
+    "url": "https://github.com/dst6se/node-red-contrib-nordpool-chargecheap/issues"
+  },
+  "keywords": [
+    "node-red",
+    "nordpool",
+    "electricity",
+    "energy",
+    "price",
+    "automation",
+    "smart-charging",
+    "load-shifting",
+    "battery",
+    "home-assistant"
+  ],
+  "engines": {
+    "node": ">=16.0.0",
+    "node-red": ">=3.0.0"
+  },
+  "type": "commonjs",
+  "main": "nordpool-chargecheap.js",
+  "files": [
+    "nordpool-chargecheap.js",
+    "nordpool-chargecheap.html",
+    "README.md",
+    "LICENSE",
+    "examples/"
+  ],
   "node-red": {
     "nodes": {
       "nordpool-chargecheap": "nordpool-chargecheap.js"
     }
   }
 }
-
