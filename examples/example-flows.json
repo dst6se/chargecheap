@@ -6,10 +6,6 @@
     "disabled": false,
     "info": "Exempel på hur man använder node-red-contrib-nordpool-chargecheap"
   },
-
-  /* =========================================================
-   * 1. GRUNDFLÖDE: Enkel billigaste timmar (60-min intervall)
-   * ========================================================= */
   {
     "id": "inject_basic_params",
     "type": "inject",
@@ -128,10 +124,6 @@
     "y": 180,
     "wires": []
   },
-
-  /* =========================================================
-   * 2. AVANCERAT FLÖDE: 15-min intervall + contiguous block
-   * ========================================================= */
   {
     "id": "inject_adv_params",
     "type": "inject",
@@ -156,7 +148,7 @@
     "type": "function",
     "z": "grp_root",
     "name": "Simulerad 15-min data (today+tomorrow)",
-    "func": "// Skapa 96 punkter per dag (00:00–23:45) 15-min intervall.\nfunction genDay(baseDate, offset) {\n    const arr = [];\n    const base = new Date(baseDate);\n    base.setHours(0,0,0,0);\n    base.setDate(base.getDate() + offset);\n    for (let i=0; i<96; i++) {\n        const ts = new Date(base.getTime() + i * 15 * 60000);\n        // Variera med en mild sinus + slump\n        const hour = ts.getHours() + ts.getMinutes()/60;\n        const basePrice = 100 + 30*Math.sin(hour/24 * Math.PI*2); // svängning 70–130\n        const finalPrice = basePrice + Math.random()*20; // upp till +20 variation\n        arr.push({ start: ts.toISOString(), value: Number(finalPrice.toFixed(2)) });\n    }\n    return arr;\n}\nconst now = new Date();\nmsg.data = {\n    attributes: {\n        raw_today: genDay(now, 0),\n        raw_tomorrow: genDay(now, 1),\n        unit_of_measurement: \"Öre/kWh\" // Ingen konvertering behövs\n    }\n};\nreturn msg;",
+    "func": "// Skapa 96 punkter per dag (00:00–23:45) 15-min intervall.\nfunction genDay(baseDate, offset) {\n    const arr = [];\n    const base = new Date(baseDate);\n    base.setHours(0,0,0,0);\n    base.setDate(base.getDate() + offset);\n    for (let i=0; i<96; i++) {\n        const ts = new Date(base.getTime() + i * 15 * 60000);\n        const hour = ts.getHours() + ts.getMinutes()/60;\n        const basePrice = 100 + 30*Math.sin(hour/24 * Math.PI*2);\n        const finalPrice = basePrice + Math.random()*20;\n        arr.push({ start: ts.toISOString(), value: Number(finalPrice.toFixed(2)) });\n    }\n    return arr;\n}\nconst now = new Date();\nmsg.data = {\n    attributes: {\n        raw_today: genDay(now, 0),\n        raw_tomorrow: genDay(now, 1),\n        unit_of_measurement: \"Öre/kWh\"\n    }\n};\nreturn msg;",
     "outputs": 1,
     "noerr": 0,
     "x": 430,
@@ -235,10 +227,6 @@
     "y": 380,
     "wires": []
   },
-
-  /* =========================================================
-   * 3. EXPENSIVE MODE DEMO (urladdning)
-   * ========================================================= */
   {
     "id": "inject_exp_params",
     "type": "inject",
@@ -263,7 +251,7 @@
     "type": "function",
     "z": "grp_root",
     "name": "Simulerad hourly (Expensive)",
-    "func": "// 24 timpunkter idag + 24 imorgon\n// Vi gör en prisprofil som stiger runt lunch och kväll\nfunction gen(baseDate, offset){\n    const arr = [];\n    const d = new Date(baseDate);\n    d.setHours(0,0,0,0);\n    d.setDate(d.getDate()+offset);\n    for (let h=0; h<24; h++){\n        const ts = new Date(d.getTime());\n        ts.setHours(h);\n        // Enkel profil: morgon låg, mitt på dagen högre, sen kväll peak\n        let base = 70 + 20*Math.sin((h-6)/24 * Math.PI*2) + (h>17 ? 30 : 0);\n        base += Math.random()*10; // lite noise\n        arr.push({ start: ts.toISOString(), value: Number(base.toFixed(2)) });\n    }\n    return arr;\n}\nconst now = new Date();\nmsg.data = {\n  attributes: {\n    raw_today: gen(now,0),\n    raw_tomorrow: gen(now,1),\n    unit_of_measurement: \"Öre/kWh\"\n  }\n};\nreturn msg;",
+    "func": "// 24 timpunkter idag + 24 imorgon\nfunction gen(baseDate, offset){\n    const arr = [];\n    const d = new Date(baseDate);\n    d.setHours(0,0,0,0);\n    d.setDate(d.getDate()+offset);\n    for (let h=0; h<24; h++){\n        const ts = new Date(d.getTime());\n        ts.setHours(h);\n        let base = 70 + 20*Math.sin((h-6)/24 * Math.PI*2) + (h>17 ? 30 : 0);\n        base += Math.random()*10;\n        arr.push({ start: ts.toISOString(), value: Number(base.toFixed(2)) });\n    }\n    return arr;\n}\nconst now = new Date();\nmsg.data = {\n  attributes: {\n    raw_today: gen(now,0),\n    raw_tomorrow: gen(now,1),\n    unit_of_measurement: \"Öre/kWh\"\n  }\n};\nreturn msg;",
     "outputs": 1,
     "noerr": 0,
     "x": 440,
@@ -342,10 +330,6 @@
     "y": 580,
     "wires": []
   },
-
-  /* =========================================================
-   * 4. OVERRIDE DEMO (aktivera/avaktivera ha_enable)
-   * ========================================================= */
   {
     "id": "inject_override_off",
     "type": "inject",
@@ -389,10 +373,6 @@
     "y": 660,
     "wires": [["nordpool_basic","nordpool_adv","nordpool_exp"]]
   },
-
-  /* =========================================================
-   * 5. RESET DEMO
-   * ========================================================= */
   {
     "id": "inject_reset",
     "type": "inject",
@@ -408,5 +388,3 @@
     "wires": [["nordpool_basic","nordpool_adv","nordpool_exp"]]
   }
 ]
-
-
