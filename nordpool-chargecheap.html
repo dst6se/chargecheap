@@ -12,7 +12,8 @@ RED.nodes.registerType("nordpool-chargecheap", {
         force_value: { value: -600, required: false },
         ha_entity: { value: "", required: false },
         invert_selection: { value: false, required: false },
-        contiguous_mode: { value: false, required: false }
+        contiguous_mode: { value: false, required: false },
+        debug: { value: false, required: false }
     },
     inputs: 1,
     outputs: 4,
@@ -20,7 +21,7 @@ RED.nodes.registerType("nordpool-chargecheap", {
     label: function () {
         return this.name || "Nordpool ChargeCheap";
     },
-    outputLabels: ["ON", "OFF", "Payload", "HA"],
+    outputLabels: ["ON", "OFF", "Analysis", "HA"],
     paletteLabel: "Nordpool ChargeCheap",
     labelStyle: "node_label_italic"
 });
@@ -28,7 +29,7 @@ RED.nodes.registerType("nordpool-chargecheap", {
 
 <style>
 .form-row label {
-    width: 160px;
+    width: 180px;
     display: inline-block;
 }
 </style>
@@ -41,21 +42,21 @@ RED.nodes.registerType("nordpool-chargecheap", {
 
     <div class="form-row">
         <label for="node-input-start"><i class="fa fa-clock-o"></i> Start hour</label>
-        <input type="number" id="node-input-start" min="0" max="23" placeholder="e.g. 9">
+        <input type="number" id="node-input-start" min="0" max="23" placeholder="e.g. 22">
     </div>
 
     <div class="form-row">
         <label for="node-input-stop"><i class="fa fa-clock-o"></i> Stop hour</label>
-        <input type="number" id="node-input-stop" min="0" max="23" placeholder="e.g. 17">
+        <input type="number" id="node-input-stop" min="0" max="23" placeholder="e.g. 6">
     </div>
 
     <div class="form-row">
-        <label for="node-input-count"><i class="fa fa-hashtag"></i> Count</label>
-        <input type="number" id="node-input-count" min="1" max="96" placeholder="e.g. 5">
+        <label for="node-input-count"><i class="fa fa-hashtag"></i> Count (slots)</label>
+        <input type="number" id="node-input-count" min="1" max="96" placeholder="e.g. 8">
     </div>
 
     <div class="form-row">
-        <label for="node-input-invert_selection"><i class="fa fa-exchange"></i> Invert selection</label>
+        <label for="node-input-invert_selection"><i class="fa fa-exchange"></i> Invert (expensive mode)</label>
         <input type="checkbox" id="node-input-invert_selection">
     </div>
 
@@ -75,58 +76,127 @@ RED.nodes.registerType("nordpool-chargecheap", {
     </div>
 
     <div class="form-row">
-        <label for="node-input-force_value"><i class="fa fa-bolt"></i> Force value outside period</label>
+        <label for="node-input-force_value"><i class="fa fa-bolt"></i> Force value (outside / override)</label>
         <input type="number" id="node-input-force_value" placeholder="-600">
     </div>
 
     <div class="form-row">
         <label for="node-input-ha_entity"><i class="fa fa-home"></i> Home Assistant entity</label>
-        <input type="text" id="node-input-ha_entity" placeholder="input_number.elpris">
+        <input type="text" id="node-input-ha_entity" placeholder="input_number.elpris_ref">
+    </div>
+
+    <div class="form-row">
+        <label for="node-input-debug"><i class="fa fa-bug"></i> Debug logging</label>
+        <input type="checkbox" id="node-input-debug">
     </div>
 </script>
 
 <script type="text/html" data-help-name="nordpool-chargecheap">
     <p>
-        <b>Nordpool ChargeCheap</b> selects the cheapest (or most expensive if inverted) quarters within a given time window.<br>
-        Supports:
-        <ul>
-            <li>Standard mode – selects individual cheapest quarters</li>
-            <li>Contiguous block mode – finds the cheapest/most expensive continuous block</li>
-        </ul>
-        <b>Count</b> = number of 15-minute intervals (not hours).<br>
-        Example: 4 means 1 hour.
+        <b>Nordpool ChargeCheap</b> selects a set of cheapest (or, if inverted, most expensive) price slots within a defined time window.
+        It can also pick a single contiguous block with the lowest/highest average price.
     </p>
+
+    <h3>Time Window Modes</h3>
+    <ul>
+        <li><b>Normal same-day:</b> start &lt; stop (e.g. 07→15)</li>
+        <li><b>Overnight:</b> start &gt; stop (e.g. 22→06, spans midnight)</li>
+        <li><b>Rolling 24h:</b> start == stop (dynamic 24h window anchored to the most recent occurrence of that hour)</li>
+    </ul>
+
+    <h3>Count / Slots</h3>
+    <p>
+        <b>Count</b> is the number of data points (slots) to select. Slot length (interval_minutes) is auto-detected
+        from the incoming timestamps (typically 60, 30, or 15 minutes). For 15-minute data, count=4 ≈ 1 hour of selection.
+    </p>
+
+    <h3>Selection Strategies</h3>
+    <ul>
+        <li><b>Cheap mode (default):</b> picks the lowest-priced slots.</li>
+        <li><b>Expensive mode (invert):</b> picks the highest-priced slots (useful for discharge / shedding).</li>
+        <li><b>Contiguous block:</b> chooses one continuous block of length <code>count</code> with the lowest (cheap) or highest (expensive) average price.</li>
+    </ul>
+
+    <h3>Reference Price Semantics</h3>
+    <ul>
+        <li><code>reference_price</code>: Cheap mode = highest price among selected cheap slots (upper boundary for charging). Expensive mode = lowest price among selected expensive slots (lower boundary for discharging).</li>
+        <li>Additional attributes exposed: <code>reference_price_numeric</code>, <code>reference_price_role</code>, <code>reference_price_effective</code>, <code>next_reference_when_enabled</code>.</li>
+    </ul>
+
+    <h3>Home Assistant Override</h3>
+    <ul>
+        <li>Set <code>msg.ha_enable = "off"</code> to force sending <code>force_value</code> to HA regardless of selection.</li>
+        <li>During override, selection is still computed so future reference is visible in attributes.</li>
+    </ul>
 
     <h3>Inputs</h3>
     <ul>
-        <li><code>msg.data</code> – Expected to contain Nordpool price data, e.g.:
-            <pre>{
+        <li><code>msg.data</code>: Should include <code>attributes.raw_today</code>, optional <code>attributes.raw_tomorrow</code>, and <code>unit_of_measurement</code>.</li>
+        <li><code>msg.start</code>, <code>msg.stop</code>, <code>msg.count</code>: Override configured values.</li>
+        <li><code>msg.ha_enable</code>: <code>"on"</code> (normal) or <code>"off"</code> (override).</li>
+        <li><code>msg.reset</code>: Resets internal context (prices history, overrides).</li>
+    </ul>
+
+    <h3>Outputs</h3>
+    <table style="width:100%; border-collapse:collapse;" border="1">
+        <tr><th>#</th><th>Payload</th><th>Description</th></tr>
+        <tr><td>1</td><td><code>payload_on</code></td><td>Active selected slot (ON)</td></tr>
+        <tr><td>2</td><td><code>payload_off</code></td><td>Not active / outside selection</td></tr>
+        <tr><td>3</td><td><code>{ state, attributes }</code></td><td>Analysis result (reference + details)</td></tr>
+        <tr><td>4</td><td>HA service object</td><td><code>{ action, data.entity_id, data.value }</code></td></tr>
+    </table>
+
+    <h3>Key Attributes (subset)</h3>
+    <ul style="columns:2;">
+        <li><code>time_01 ...</code></li>
+        <li><code>selection_mode</code></li>
+        <li><code>selection_strategy</code></li>
+        <li><code>reference_price</code></li>
+        <li><code>reference_price_numeric</code></li>
+        <li><code>reference_price_role</code></li>
+        <li><code>reference_price_effective</code></li>
+        <li><code>next_reference_when_enabled</code></li>
+        <li><code>count</code></li>
+        <li><code>interval_minutes</code></li>
+        <li><code>contiguous_mode</code></li>
+        <li><code>rolling_24h</code></li>
+        <li><code>block_mode_start/stop/average</code></li>
+        <li><code>expected_points</code></li>
+        <li><code>actual_points</code></li>
+        <li><code>missing_points</code></li>
+        <li><code>partial_period</code></li>
+        <li><code>ha_override</code></li>
+        <li><code>ha_sent_value</code></li>
+        <li><code>calculated_at</code></li>
+    </ul>
+
+    <h3>Example Input</h3>
+    <pre>{
+  "start": 22,
+  "stop": 6,
+  "count": 8,
+  "ha_enable": "on",
   "data": {
     "attributes": {
-      "raw_today": [...],
-      "raw_tomorrow": [...],
+      "raw_today": [{ "start": "2025-10-28T00:00:00+01:00", "value": 94.35 }],
+      "raw_tomorrow": [{ "start": "2025-10-29T00:00:00+01:00", "value": 101.44 }],
       "unit_of_measurement": "SEK/kWh"
     }
   }
 }</pre>
-        </li>
-        <li><code>msg.start</code>, <code>msg.stop</code>, <code>msg.count</code> – Override configured values for start hour, stop hour, and count.</li>
-        <li><code>msg.ha_enable</code> – "on" = normal mode, "off" = HA override (output 4 sends <i>force_value</i>, outputs 1–3 behave normally).</li>
-        <li><code>msg.reset</code> – Clears all stored context data and resets node state.</li>
+
+    <h3>Tips</h3>
+    <ul>
+        <li>Increase count for finer intervals (e.g. 12 slots of 15 min ≈ 3 hours).</li>
+        <li>Use rolling 24h for dynamic daily strategies.</li>
+        <li>Invert selection for high-price (expensive) windows (discharge trigger).</li>
+        <li>Enable debug for detailed diagnostic logs.</li>
     </ul>
 
-    <h3>Outputs</h3>
+    <h3>Status / Errors</h3>
     <ul>
-        <li><b>Output 1</b>: ON payload (<code>payload_on</code>)</li>
-        <li><b>Output 2</b>: OFF payload (<code>payload_off</code>)</li>
-        <li><b>Output 3</b>: Information / analysis result (<code>payload.state</code> and <code>payload.attributes</code>)</li>
-        <li><b>Output 4</b>: Home Assistant message with <code>action</code> and <code>data.entity_id/value</code></li>
-    </ul>
-
-    <h3>Notes</h3>
-    <ul>
-        <li>If <code>msg.ha_enable</code> = "off", a status message <i>HA disabled (manual override)</i> is shown on the node.</li>
-        <li>If start = stop, the full 24h period is considered active.</li>
+        <li><i>Waiting for Nordpool data</i>: No valid slots yet.</li>
+        <li><i>HA disabled (manual override)</i>: Force value sent to HA.</li>
+        <li><i>Missing start/stop/count</i>: Required configuration not provided.</li>
     </ul>
 </script>
-
