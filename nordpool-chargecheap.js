@@ -3,7 +3,7 @@ module.exports = function (RED) {
         RED.nodes.createNode(this, config);
         const node = this;
 
-        // --- Konfiguration samlad ---
+        // --- Configuration ---
         const cfg = {
             manualStart: toInt(config.start),
             manualStop: toInt(config.stop),
@@ -17,7 +17,7 @@ module.exports = function (RED) {
             debug: !!config.debug
         };
 
-        // --- Hjälpfunktioner ---
+        // --- Utility functions ---
         function toInt(v) {
             if (v === undefined || v === null || v === "") return null;
             const n = Number(v);
@@ -123,12 +123,11 @@ module.exports = function (RED) {
             return rounded;
         }
 
-        // Optimerad contiguous-selektion med bibehållen logik
         function selectContiguous(inPeriod, count, invertSelection) {
             let bestAvg = invertSelection ? -Infinity : Infinity;
             let bestStartIdx = 0;
 
-            // Prefix-summor för O(1) beräkning av blockmedel
+            // Prefix sums for O(1) block average calculation
             const prefix = new Array(inPeriod.length + 1).fill(0);
             for (let i = 0; i < inPeriod.length; i++) {
                 prefix[i + 1] = prefix[i] + inPeriod[i].value;
@@ -194,9 +193,7 @@ module.exports = function (RED) {
             const refCheap = values.length ? Math.max(...values) : null;
             const refExpensive = values.length ? Math.min(...values) : null;
 
-            // Referensprissemantik:
-            // cheap mode  -> högsta priset bland valda billiga tidsluckor (övre gräns för laddning).
-            // expensive mode -> lägsta priset bland valda dyra tidsluckor (nedre gräns för urladdning).
+            // Reference price semantics
             const reference = invertSelection ? refExpensive : refCheap;
 
             attr.reference_price = reference !== null ? `${reference.toFixed(2)}Öre` : null;
@@ -225,6 +222,11 @@ module.exports = function (RED) {
 
             if (selected.length === 1) {
                 attr.single_selection = true;
+            }
+
+            // Slot alignment attribute
+            if (selected.length > 0) {
+                attr.slot_alignment = `First slot: ${toLocalLabel(new Date(selected[0].start))}, Last slot: ${toLocalLabel(new Date(selected[selected.length - 1].start))}`;
             }
 
             return { attributes: attr, reference };
@@ -375,9 +377,11 @@ module.exports = function (RED) {
 
                 const periodLabel = `${toLocalLabel(startDate)} → ${toLocalLabel(endDate)}`;
 
+                // --- Improved slot filtering ---
+                // Only slots starting >= startDate and < endDate are included
                 const inPeriod = all.filter(entry => {
                     const entryDate = new Date(entry.start);
-                    return entryDate >= startDate && entryDate <= endDate;
+                    return entryDate >= startDate && entryDate < endDate;
                 });
 
                 if (inPeriod.length === 0) {
@@ -425,7 +429,7 @@ module.exports = function (RED) {
                     rolling24h
                 );
 
-                // Extra diagnostik och semantiska attribut
+                // Extra diagnostics and semantic attributes
                 const totalHours = (endDate - startDate) / 3600000;
                 attr.total_hours_span = Number(totalHours.toFixed(2));
                 attr.expected_points = expectedPoints;
@@ -438,13 +442,13 @@ module.exports = function (RED) {
                 attr.reference_price_numeric = reference ?? null;
                 attr.calculated_at = new Date().toISOString();
 
-                // Override/normal semantik
+                // Override/normal semantics
                 if (haEnabled === false) {
                     attr.ha_override = "on";
                     attr.control_mode = "override";
                     attr.ha_sent_value = cfg.forceValue;
                     attr.next_reference_when_enabled = reference ?? null;
-                    attr.reference_price_effective = null; // Visar att den inte används just nu
+                    attr.reference_price_effective = null; // Not used now
                 } else {
                     attr.ha_override = "off";
                     attr.control_mode = "normal";
@@ -456,7 +460,7 @@ module.exports = function (RED) {
                 const newMsg = { payload: { state: reference, attributes: attr } };
 
                 const active = isActiveNow(selected, intervalMinutes);
-                let outsidePeriod = !(new Date() >= startDate && new Date() <= endDate);
+                let outsidePeriod = !(new Date() >= startDate && new Date() < endDate);
 
                 let haMsgInside, haMsgOutside;
                 if (haEnabled === false) {

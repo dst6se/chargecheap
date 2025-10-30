@@ -21,6 +21,7 @@ A Node-RED node for analyzing Nordpool electricity prices and automatically sele
 - Rich diagnostic attributes (block averages, reference thresholds, data completeness).
 - Inverted mode for high-price alerting or battery discharge strategy.
 - Additional semantic attributes clarifying override mode, selection purpose and next effective reference.
+- **Slot alignment logic:** If you select e.g. `start=23`, `stop=0` with 15-minute slots, you will get the slots starting at 23:00, 23:15, 23:30, and 23:45 (not slots starting at 00:00 or later). This ensures interval selection is intuitive and matches human expectations.
 
 ---
 
@@ -202,6 +203,7 @@ Use cases:
 | `control_mode` | `override` or `normal` |
 | `ha_sent_value` | Value pushed to HA entity this cycle |
 | `calculated_at` | ISO timestamp of calculation |
+| `slot_alignment` | First/last selected slot time |
 
 ---
 
@@ -307,16 +309,7 @@ Restart Node-RED if needed.
 - `count` auto-clamped if more than available intervals.
 - Large gaps or malformed timestamps are ignored after dedupe.
 - Interval detection outside 15/30/60 still supported (custom sources).
-
----
-
-## 💡 Future Enhancements (Ideas)
-
-- Dual-threshold exposure (min + max reference simultaneously).
-- Selection lock to avoid reshuffle when tomorrow data appears.
-- Multiple HA entities (charge vs discharge).
-- Alternative reference strategies (median, weighted, percentile).
-- FX conversion for EUR → SEK with live rates.
+- **Slot alignment**: If your selection window does not align with slot boundaries, the node will include all slots starting at or after the start time and strictly before the stop time. For example, with 15-minute slots and start=23, stop=0, the slots chosen will be 23:00, 23:15, 23:30, and 23:45.
 
 ---
 
@@ -330,6 +323,7 @@ Restart Node-RED if needed.
 | Charger not turning on | Not in active selected slot | Inspect `time_XX` + system clock |
 | Price mismatch | Unit conversion discrepancy | Verify `unit_of_measurement` |
 | Selection seems to shift during day | New tomorrow data appended | Consider lock logic (future enhancement) |
+| Unexpected slot times | Selection window does not align with slot boundaries | Adjust your start/stop times to match slot intervals (e.g., use start=23:00 if slots start at 23:00) |
 
 ---
 
